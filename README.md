@@ -2,6 +2,8 @@
 
 Sample project to practice setting up mirroring from GitHub to GitLab.
 
+GitLab URL: https://gitlab.com/MatthewOscar/github-to-gitlab
+
 ## Overview
 
 This repository demonstrates how to mirror a GitHub repository to GitLab so that your GitLab copy stays in sync automatically whenever you push changes to GitHub.
