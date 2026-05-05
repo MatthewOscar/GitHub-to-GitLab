@@ -28,6 +28,9 @@ jobs:
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_REPO_URL: ${{ secrets.GITLAB_REPO_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.event.ref_type }}
+          REF_NAME: ${{ github.event.ref }}
         run: |
           if [[ "$GITLAB_REPO_URL" != https://* ]]; then
             echo "Error: GITLAB_REPO_URL must start with 'https://'" >&2
