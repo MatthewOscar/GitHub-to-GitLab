@@ -1,22 +1,26 @@
-# Mirrors GitHub → GitLab. Pushes are non-forced and deletions are explicit
-# rather than --prune, so divergence and missed events fail loudly instead
-# of silently overwriting work on GitLab.
-
 name: Mirror to GitLab
 
 on:
   push:
-    branches:
-      - '**'
-    tags:
-      - '**'
+    branches: ['**']
+    tags: ['**']
   delete:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'  # Daily reconciliation at 06:00 UTC — prunes orphans
+
+concurrency:
+  group: mirror-to-gitlab
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository (full history)
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -32,22 +36,52 @@ jobs:
           REF_TYPE: ${{ github.event.ref_type }}
           REF_NAME: ${{ github.event.ref }}
         run: |
+          set -euo pipefail
+
           if [[ "$GITLAB_REPO_URL" != https://* ]]; then
             echo "Error: GITLAB_REPO_URL must start with 'https://'" >&2
             exit 1
           fi
           REPO_HOST_PATH="${GITLAB_REPO_URL#https://}"
+
+          # Idempotent remote setup
+          git remote remove gitlab 2>/dev/null || true
           git remote add gitlab "https://oauth2:${GITLAB_TOKEN}@${REPO_HOST_PATH}"
-          # Handle mirroring using specific commands per ref type.
-          if [[ "$EVENT_NAME" == "delete" ]]; then
-            if [[ "$REF_TYPE" == "branch" ]]; then
-              echo "Deleting branch '${REF_NAME}' on GitLab"
-              git push gitlab --delete "refs/heads/${REF_NAME}"
-            elif [[ "$REF_TYPE" == "tag" ]]; then
-              echo "Deleting tag '${REF_NAME}' on GitLab"
-              git push gitlab --delete "refs/tags/${REF_NAME}"
-            fi
-          else
-            git push gitlab 'refs/remotes/origin/*:refs/heads/*'
-            git push gitlab --tags
-          fi
+
+          case "$EVENT_NAME" in
+            delete)
+              # Targeted delete. Check existence first so "already gone" isn't fatal,
+              # but real failures (auth, protected branch) still abort the workflow.
+              case "$REF_TYPE" in
+                branch) FULL_REF="refs/heads/${REF_NAME}" ;;
+                tag)    FULL_REF="refs/tags/${REF_NAME}" ;;
+                *)      echo "Unknown ref_type: ${REF_TYPE}" >&2; exit 1 ;;
+              esac
+              if git ls-remote --exit-code gitlab "$FULL_REF" >/dev/null 2>&1; then
+                echo "Deleting ${REF_TYPE} '${REF_NAME}' on GitLab"
+                git push gitlab --delete "$FULL_REF"
+              else
+                echo "${REF_TYPE^} '${REF_NAME}' already absent on GitLab — nothing to do"
+              fi
+              ;;
+
+            schedule|workflow_dispatch)
+              # Reconciliation pass — make GitLab match GitHub exactly, including
+              # pruning refs that no longer exist on GitHub. This catches missed
+              # delete events. GITLAB_REPO_URL had better be correct.
+              echo "Reconciliation: syncing all refs and pruning orphans"
+              git push gitlab 'refs/remotes/origin/*:refs/heads/*' --force --prune
+              git push gitlab '+refs/tags/*:refs/tags/*' --prune
+              ;;
+
+            push)
+              # Normal sync: force-push everything, no pruning. GitHub is authoritative.
+              git push gitlab 'refs/remotes/origin/*:refs/heads/*' --force
+              git push gitlab --tags --force
+              ;;
+
+            *)
+              echo "Unhandled event: ${EVENT_NAME}" >&2
+              exit 1
+              ;;
+          esac
