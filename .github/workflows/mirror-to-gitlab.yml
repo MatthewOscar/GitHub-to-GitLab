@@ -24,9 +24,6 @@ jobs:
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_REPO_URL: ${{ secrets.GITLAB_REPO_URL }}
-          EVENT_NAME: ${{ github.event_name }}
-          REF_TYPE: ${{ github.event.ref_type }}
-          REF_NAME: ${{ github.event.ref }}
         run: |
           if [[ "$GITLAB_REPO_URL" != https://* ]]; then
             echo "Error: GITLAB_REPO_URL must start with 'https://'" >&2
@@ -34,17 +31,5 @@ jobs:
           fi
           REPO_HOST_PATH="${GITLAB_REPO_URL#https://}"
           git remote add gitlab "https://oauth2:${GITLAB_TOKEN}@${REPO_HOST_PATH}"
-          if [[ "$EVENT_NAME" == "delete" ]]; then
-            # Mirror branch/tag deletions to GitLab without using --mirror
-            if [[ "$REF_TYPE" == "branch" ]]; then
-              git push gitlab --delete "refs/heads/${REF_NAME}"
-            elif [[ "$REF_TYPE" == "tag" ]]; then
-              git push gitlab --delete "refs/tags/${REF_NAME}"
-            fi
-          else
-            # Push only branches and tags; avoid --mirror which also pushes
-            # remote-tracking refs (refs/remotes/origin/*) that GitLab rejects
-            # as hidden refs.
-            git push gitlab --all
-            git push gitlab --tags
-          fi
+          # --mirror keeps branches, tags, and deletions in sync for a true mirror.
+          git push --mirror gitlab
